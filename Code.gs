@@ -2,7 +2,9 @@
 const HEADERS_ = {
   Actions: ['id','title','date','time','grade','coordinatorName','coordinatorEmail','status','classesJson','createdAt','updatedAt'],
   Assignments: ['actionId','classId','label','teacherEmail','sampleCount','rosterJson','selectedJson','replacementJson','updatedAt'],
-  Records: ['actionId','classId','studentId','result','issuesJson','remarks','followUp','followDate','followNotes','checkedBy','checkedAt']
+  Records: ['actionId','classId','studentId','result','issuesJson','remarks','followUp','followDate','followNotes','checkedBy','checkedAt'],
+  Students: ['class','number','name'],
+  Teachers: ['name','email','defaultClass']
 };
 const ISSUES_ = ['使用時間過長','不恰當資料（相片／影片）','觀看視頻過多（如 YouTube）','其他問題'];
 function doGet() {
@@ -48,7 +50,13 @@ function locked_(fn) { const l=LockService.getScriptLock(); l.waitLock(15000); t
 function initializeStorage() {
   admin_(); const ss=store_();
   Object.keys(HEADERS_).forEach(name=>{let sh=ss.getSheetByName(name);if(!sh)sh=ss.insertSheet(name);if(sh.getLastRow()===0)sh.appendRow(HEADERS_[name]);});
-  return '已建立 Actions、Assignments、Records 工作表。';
+  return '已建立系統工作表。';
+}
+function getDirectory() {
+  admin_();
+  const students=rows_(sheet_('Students')).map(({data:d})=>({classLabel:String(d.class||'').trim(),number:String(d.number||'').trim(),name:String(d.name||'').trim()}));
+  const teachers=rows_(sheet_('Teachers')).map(({data:d})=>({name:String(d.name||'').trim(),email:String(d.email||'').trim().toLowerCase(),defaultClass:String(d.defaultClass||'').trim()}));
+  return {students,teachers};
 }
 function actions_() { return rows_(sheet_('Actions')).map(({row,data:d})=>({row,id:String(d.id),title:String(d.title),date:dateText_(d.date),time:String(d.time||''),grade:String(d.grade),coordinatorName:String(d.coordinatorName),coordinatorEmail:String(d.coordinatorEmail).toLowerCase(),status:String(d.status),classes:json_(d.classesJson,[]),createdAt:String(d.createdAt),updatedAt:String(d.updatedAt)})); }
 function action_(id) { const a=actions_().find(x=>x.id===id);if(!a)throw new Error('找不到行動。');return a; }
@@ -82,8 +90,9 @@ function createAction(payload) {
     const used=new Set(),cls=p.classes.map((c,i)=>{let label=bounded_(c.label,20),teacherEmail=mail_(c.teacherEmail),roster=Array.isArray(c.roster)?c.roster:[],n=Number(c.sampleCount);
       if(used.has(label))throw new Error('班別不能重複。');used.add(label);
       if(roster.length<1||roster.length>60||!Number.isInteger(n)||n<1||n>roster.length)throw new Error(label+'：抽查人數或學生人數不合規格。');
-      const names=roster.map(x=>bounded_(x,80));if(new Set(names).size!==names.length)throw new Error(label+'：學生名單有重複。');
-      return{id:'c'+(i+1),label,teacherEmail,sampleCount:n,roster:names.map((name,k)=>({id:'s'+(k+1),name}))};});
+      const students=roster.map(x=>{const raw=typeof x==='string'?String(x):String(x?.name||'');const number=typeof x==='string'?'':String(x?.number||'').trim();return {number: number?bounded_(number,20):'',name:bounded_(raw,80)};});
+      if(new Set(students.map(x=>x.number||x.name)).size!==students.length)throw new Error(label+'：學生名單有重複學號或姓名。');
+      return{id:'c'+(i+1),label,teacherEmail,sampleCount:n,roster:students.map((s,k)=>({id:'s'+(k+1),...s}))};});
     const stamp=now_();sheet_('Actions').appendRow([id,title,date,time,grade,coordinatorName,coordinatorEmail,'active',JSON.stringify(cls.map(({id,label,teacherEmail})=>({id,label,teacherEmail}))),stamp,stamp]);
     const sh=sheet_('Assignments');cls.forEach(c=>sh.appendRow([id,c.id,c.label,c.teacherEmail,c.sampleCount,JSON.stringify(c.roster),'[]','[]',stamp]));
     return id;
