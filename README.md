@@ -1,6 +1,6 @@
 # BYOD iPad 抽查系統
 
-手機優先的 Google Apps Script 網頁，程式碼保存在 GitHub，學生資料只寫入學校控制的 Google Sheet。相片中的[工作指引文字版](WORK_GUIDE.md)已放到每頁底部的可收合區塊；預設收起。
+手機優先的 Google Apps Script 網頁。前端只有一個 [`Index.html`](Index.html)，內含畫面、樣式及互動；[`Code.gs`](Code.gs) 處理密碼核對、權限及資料同步。學生資料只寫入學校控制的 Google Sheet。相片中的[工作指引文字版](WORK_GUIDE.md)已放到每頁底部的可收合區塊；預設收起。
 
 ## 功能
 
@@ -15,7 +15,7 @@
 ## 部署（由學校 Google Workspace 管理帳戶操作）
 
 1. 在學校 Drive 建立一個**只有系統擁有人可以存取**的 Google Sheet，複製試算表 ID。老師無須直接取得 Sheet 權限。
-2. 在 [script.google.com](https://script.google.com/) 建立獨立 Apps Script 專案。把 `apps-script/` 中的 `Code.gs`、`Index.html`、`Styles.html`、`Client.html` 和 `appsscript.json` 複製到相同名稱的檔案。HTML 三個檔案在編輯器選「HTML」類型；`appsscript.json` 在專案設定開啟顯示資訊清單後編輯。
+2. 在 [script.google.com](https://script.google.com/) 建立 Apps Script 專案。把 `Code.gs` 貼到程式碼檔，並建立一個名為 `Index.html` 的 HTML 檔，貼入 `Index.html`。不需要前端框架、建置工具或另外的 CSS／JavaScript 檔案；`appsscript.json` 可按需要複製。
 3. 在 **專案設定 → 指令碼屬性**設定 `SPREADSHEET_ID`、`PASSWORD_SALT`、`ADMIN_PASSWORD_HASH`、`TEACHER_PASSWORD_HASH`。兩組密碼必須不同，至少 8 字；產生隨機鹽及密碼，再計算 `base64(SHA-256(鹽 + 密碼))`，只儲存雜湊。不要將鹽、雜湊或原始密碼加入公開 GitHub。
 4. 試算表有 `Actions`、`Assignments`、`Records`、`Students`、`Teachers` 五個工作表。`Students` 只填 `class`、`number`、`name`；`Teachers` 只填 `name`、選填的 `defaultClass`。名單留在私人 Sheet，**不要提交到 GitHub**。
 5. **部署 → 管理部署作業 → 編輯 → 建立新版本**：網頁應用程式執行身分選「我」；可存取對象選「任何人」。Google Workspace 管理員可能需要容許這個選項。複製 `/exec` 網址予老師，將教師密碼另行安全傳達；管理員密碼只交予管理員。
