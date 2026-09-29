@@ -15,27 +15,32 @@ function passwordHash_(password,salt) {
   const bytes=Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256,salt+String(password),Utilities.Charset.UTF_8);
   return Utilities.base64Encode(bytes);
 }
-function login(password) {
+function login(loginName,password) {
   const p=PropertiesService.getScriptProperties(),salt=p.getProperty('PASSWORD_SALT'),adminHash=p.getProperty('ADMIN_PASSWORD_HASH'),teacherHash=p.getProperty('TEACHER_PASSWORD_HASH');
   if(!salt||!adminHash||!teacherHash)throw new Error('系統密碼尚未設定，請聯絡管理員。');
-  const value=String(password||'');if(value.length<8||value.length>128)throw new Error('密碼不正確。');
-  const hash=passwordHash_(value,salt),role=hash===adminHash?'admin':hash===teacherHash?'teacher':'';
-  if(!role)throw new Error('密碼不正確。');
-  const token=Utilities.getUuid();CacheService.getScriptCache().put('session:'+token,role,21600);
-  return {token,role};
+  const username=String(loginName||'').trim(),value=String(password||'');
+  if(!username||value.length<8||value.length>128)throw new Error('登入名稱或密碼不正確。');
+  const hash=passwordHash_(value,salt),isAdmin=username.toLowerCase()===(p.getProperty('ADMIN_LOGIN_NAME')||'admin').toLowerCase();
+  const teacher=!isAdmin&&rows_(sheet_('Teachers')).some(x=>String(x.data.name).trim()===username);
+  const session=isAdmin&&hash===adminHash?{role:'admin',name:''}:teacher&&hash===teacherHash?{role:'teacher',name:username}:null;
+  if(!session)throw new Error('登入名稱或密碼不正確。');
+  const token=Utilities.getUuid();CacheService.getScriptCache().put('session:'+token,JSON.stringify(session),21600);
+  return {token,role:session.role,name:session.name};
 }
-function role_(token) {
+function session_(token) {
   const value=String(token||'');if(!/^[0-9a-f-]{36}$/.test(value))throw new Error('請先輸入密碼登入。');
-  const role=CacheService.getScriptCache().get('session:'+value);
-  if(!['admin','teacher'].includes(role))throw new Error('登入已過期，請重新輸入密碼。');
-  return role;
+  const session=json_(CacheService.getScriptCache().get('session:'+value),null);
+  if(!session||!['admin','teacher'].includes(session.role))throw new Error('登入已過期，請重新輸入密碼。');
+  return session;
 }
+function role_(token) {return session_(token).role;}
 function logout(token) {role_(token);CacheService.getScriptCache().remove('session:'+token);return true;}
 function admin_(token) {if(role_(token)!=='admin')throw new Error('只有管理員可以執行此操作。');}
 function teacher_(name,token) {
-  role_(token);const value=String(name||'').trim();
-  if(value&&!rows_(sheet_('Teachers')).some(x=>String(x.data.name).trim()===value))throw new Error('請從教師名單選擇你的姓名。');
-  return value;
+  const session=session_(token);
+  if(session.role==='admin')return '';
+  if(!rows_(sheet_('Teachers')).some(x=>String(x.data.name).trim()===session.name))throw new Error('教師帳戶已停用，請聯絡管理員。');
+  return session.name;
 }
 function lead_(action,role,name) { return role==='admin' || !!name&&action.coordinatorName===name; }
 function access_(action,role,name) { return lead_(action,role,name) || !!name&&action.classes.some(x=>x.teacherName===name); }
@@ -117,7 +122,7 @@ function getAppState(token,teacherName) {
     const rs=rRows.filter(x=>String(x.data.actionId)===a.id).map(({data:d})=>({classId:String(d.classId),studentId:String(d.studentId),result:String(d.result)}));
     return view_(a,as,rs);
   }).sort((a,b)=>b.date.localeCompare(a.date)||b.createdAt.localeCompare(a.createdAt));
-  return {admin,teacherName:name,teacherNames:rows_(sheet_('Teachers')).map(x=>String(x.data.name)),actions:list};
+  return {admin,teacherName:name,actions:list};
 }
 function getAction(token,id,teacherName) {
   const role=role_(token),name=teacher_(teacherName,token),a=action_(String(id));if(!access_(a,role,name))throw new Error('你未獲指派參與此行動。');
