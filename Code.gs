@@ -20,7 +20,7 @@ function login(loginName,password) {
   if(!salt||!adminHash||!teacherHash)throw new Error('系統密碼尚未設定，請聯絡管理員。');
   const username=String(loginName||'').trim(),value=String(password||'');
   if(!username||value.length<8||value.length>128)throw new Error('登入名稱或密碼不正確。');
-  const hash=passwordHash_(value,salt),isAdmin=username.toLowerCase()===(p.getProperty('ADMIN_LOGIN_NAME')||'admin').toLowerCase();
+  const hash=passwordHash_(value,salt),isAdmin=username.toLowerCase()==='admin';
   const teacher=!isAdmin&&rows_(sheet_('Teachers')).some(x=>String(x.data.name).trim()===username);
   const session=isAdmin&&hash===adminHash?{role:'admin',name:''}:teacher&&hash===teacherHash?{role:'teacher',name:username}:null;
   if(!session)throw new Error('登入名稱或密碼不正確。');
