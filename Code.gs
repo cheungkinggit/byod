@@ -8,10 +8,9 @@ const HEADERS_ = {
 };
 const ISSUES_ = ['使用時間過長','不恰當資料（相片／影片）','觀看視頻過多（如 YouTube）','其他問題'];
 function doGet() {
-  return HtmlService.createTemplateFromFile('Index').evaluate()
+  return HtmlService.createHtmlOutputFromFile('Index')
     .setTitle('BYOD iPad 抽查系統').addMetaTag('viewport','width=device-width, initial-scale=1, viewport-fit=cover');
 }
-function include_(name) { return HtmlService.createHtmlOutputFromFile(name).getContent(); }
 function passwordHash_(password,salt) {
   const bytes=Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256,salt+String(password),Utilities.Charset.UTF_8);
   return Utilities.base64Encode(bytes);
