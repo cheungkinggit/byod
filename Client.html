@@ -1,3 +1,4 @@
+<script>
 const app=document.querySelector('#app');
 const issues=['使用時間過長','不恰當資料（相片／影片）','觀看視頻過多（如 YouTube）','其他問題'];
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -20,3 +21,4 @@ app.addEventListener('click',async e=>{let b=e.target.closest('[data-act]');if(!
 app.addEventListener('change',e=>{let el=e.target.closest('[data-record-class]');if(!el)return;el.querySelector('.issues').classList.toggle('hidden',el.querySelector('input[type=radio]:checked')?.value!=='issue');el.querySelector('.follow-fields').classList.toggle('hidden',!el.querySelector('[data-part=follow]').checked)});
 app.addEventListener('submit',async e=>{if(e.target.id!=='createForm')return;e.preventDefault();if(busy)return;busy=true;let b=e.target.querySelector('[type=submit]');b.disabled=true;try{syncForm();const cls=drafts.map(d=>({...d,roster:d.roster.split(/\r?\n/).map(x=>x.trim()).filter(Boolean),sampleCount:Number(d.sampleCount)}));await call('createAction',{...form,coordinatorEmail:form.coordinatorEmail||state.email,classes:cls});form={title:'BYOD iPad 特擊抽查',date:today(),time:'',grade:'',coordinatorName:'',coordinatorEmail:''};drafts=[{id:uid(),label:'',teacherEmail:'',roster:'',sampleCount:5}];screen='home';await load();toast('行動已建立')}catch(err){toast(err.message||String(err))}finally{busy=false;b.disabled=false}});
 load();setInterval(()=>{if(!busy&&screen!=='new'&&screen!=='report')load(true)},20000);
+</script>
