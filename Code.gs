@@ -58,6 +58,42 @@ function getDirectory() {
   const teachers=rows_(sheet_('Teachers')).map(({data:d})=>({name:String(d.name||'').trim(),email:String(d.email||'').trim().toLowerCase(),defaultClass:String(d.defaultClass||'').trim()}));
   return {students,teachers};
 }
+function saveClassRoster(classLabel,students) {
+  admin_();return locked_(()=>{
+    const label=String(classLabel||'').trim();
+    if(!/^[456][A-E]$/.test(label))throw new Error('請選擇小四至小六班別。');
+    if(!Array.isArray(students)||students.length<1||students.length>60)throw new Error('每班名單須有 1 至 60 人。');
+    const clean=students.map(x=>({number:bounded_(x?.number,10),name:bounded_(x?.name,80)}));
+    if(clean.some(x=>!/^[0-9]{1,3}$/.test(x.number)))throw new Error('學號須為 1 至 3 位數字。');
+    if(new Set(clean.map(x=>x.number)).size!==clean.length)throw new Error('同班學號不能重複。');
+    const sh=sheet_('Students'),others=rows_(sh).map(({data:d})=>[String(d.class||'').trim(),String(d.number||'').trim(),String(d.name||'').trim()]).filter(x=>x[0]!==label);
+    const all=[...others,...clean.map(x=>[label,x.number,x.name])].sort((a,b)=>a[0].localeCompare(b[0])||Number(a[1])-Number(b[1]));
+    if(all.length+1>sh.getMaxRows())sh.insertRowsAfter(sh.getMaxRows(),all.length+1-sh.getMaxRows());
+    const height=Math.max(sh.getLastRow()-1,all.length);
+    sh.getRange(2,1,height,3).setValues([...all,...Array.from({length:height-all.length},()=>['','',''])]);
+    return {classLabel:label,count:clean.length};
+  });
+}
+function saveTeacher(entry,oldName) {
+  admin_();return locked_(()=>{
+    const name=bounded_(entry?.name,80),email=String(entry?.email||'').trim().toLowerCase(),defaultClass=String(entry?.defaultClass||'').trim(),old=String(oldName||'').trim();
+    if(email)mail_(email);
+    if(defaultClass&&!/^[1-6][A-E]$/.test(defaultClass))throw new Error('預設班別格式須如 4A。');
+    const sh=sheet_('Teachers'),list=rows_(sh),match=list.find(x=>String(x.data.name).trim()===old);
+    if(old&&!match)throw new Error('原有教師已被修改，請重新載入名單。');
+    if(list.some(x=>x!==match&&(String(x.data.name).trim()===name||(email&&String(x.data.email).trim().toLowerCase()===email)||(defaultClass&&String(x.data.defaultClass).trim()===defaultClass))))throw new Error('教師姓名、電郵或預設班別已有相同記錄。');
+    if(match)sh.getRange(match.row,1,1,3).setValues([[name,email,defaultClass]]);
+    else sh.appendRow([name,email,defaultClass]);
+    return {name,email,defaultClass};
+  });
+}
+function removeTeacher(name) {
+  admin_();return locked_(()=>{
+    const sh=sheet_('Teachers'),match=rows_(sh).find(x=>String(x.data.name).trim()===String(name||'').trim());
+    if(!match)throw new Error('找不到教師，請重新載入名單。');
+    sh.deleteRow(match.row);return true;
+  });
+}
 function actions_() { return rows_(sheet_('Actions')).map(({row,data:d})=>({row,id:String(d.id),title:String(d.title),date:dateText_(d.date),time:String(d.time||''),grade:String(d.grade),coordinatorName:String(d.coordinatorName),coordinatorEmail:String(d.coordinatorEmail).toLowerCase(),status:String(d.status),classes:json_(d.classesJson,[]),createdAt:String(d.createdAt),updatedAt:String(d.updatedAt)})); }
 function action_(id) { const a=actions_().find(x=>x.id===id);if(!a)throw new Error('找不到行動。');return a; }
 function assignments_(id) {return rows_(sheet_('Assignments')).filter(x=>String(x.data.actionId)===id).map(({row,data:d})=>({row,actionId:String(d.actionId),classId:String(d.classId),label:String(d.label),teacherEmail:String(d.teacherEmail).toLowerCase(),sampleCount:Number(d.sampleCount),roster:json_(d.rosterJson,[]),selected:json_(d.selectedJson,[]),replacementLog:json_(d.replacementJson,[])}));}
