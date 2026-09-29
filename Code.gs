@@ -12,25 +12,34 @@ function doGet() {
     .setTitle('BYOD iPad 抽查系統').addMetaTag('viewport','width=device-width, initial-scale=1, viewport-fit=cover');
 }
 function include_(name) { return HtmlService.createHtmlOutputFromFile(name).getContent(); }
-function email_() {
-  const address = String(Session.getActiveUser().getEmail() || '').trim().toLowerCase();
-  if (!address) throw new Error('無法辨認學校 Google 帳戶。請用同一 Google Workspace 網域登入，並檢查網頁部署設定。');
-  const domain = String(PropertiesService.getScriptProperties().getProperty('SCHOOL_DOMAIN') || '').trim().toLowerCase();
-  if (!domain || address.split('@')[1] !== domain) throw new Error('此帳戶不屬於已設定的學校網域。');
-  return address;
+function passwordHash_(password,salt) {
+  const bytes=Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256,salt+String(password),Utilities.Charset.UTF_8);
+  return Utilities.base64Encode(bytes);
 }
-function isAdmin_(address) {
-  return String(PropertiesService.getScriptProperties().getProperty('ADMIN_EMAILS') || '')
-    .split(',').map(x=>x.trim().toLowerCase()).includes(address);
+function login(password) {
+  const p=PropertiesService.getScriptProperties(),salt=p.getProperty('PASSWORD_SALT'),adminHash=p.getProperty('ADMIN_PASSWORD_HASH'),teacherHash=p.getProperty('TEACHER_PASSWORD_HASH');
+  if(!salt||!adminHash||!teacherHash)throw new Error('系統密碼尚未設定，請聯絡管理員。');
+  const value=String(password||'');if(value.length<8||value.length>128)throw new Error('密碼不正確。');
+  const hash=passwordHash_(value,salt),role=hash===adminHash?'admin':hash===teacherHash?'teacher':'';
+  if(!role)throw new Error('密碼不正確。');
+  const token=Utilities.getUuid();CacheService.getScriptCache().put('session:'+token,role,21600);
+  return {token,role};
 }
-function admin_() { const address=email_(); if (!isAdmin_(address)) throw new Error('只有管理員可以執行此操作。'); return address; }
-function teacher_(name) {
-  email_();const value=String(name||'').trim();
+function role_(token) {
+  const value=String(token||'');if(!/^[0-9a-f-]{36}$/.test(value))throw new Error('請先輸入密碼登入。');
+  const role=CacheService.getScriptCache().get('session:'+value);
+  if(!['admin','teacher'].includes(role))throw new Error('登入已過期，請重新輸入密碼。');
+  return role;
+}
+function logout(token) {role_(token);CacheService.getScriptCache().remove('session:'+token);return true;}
+function admin_(token) {if(role_(token)!=='admin')throw new Error('只有管理員可以執行此操作。');}
+function teacher_(name,token) {
+  role_(token);const value=String(name||'').trim();
   if(value&&!rows_(sheet_('Teachers')).some(x=>String(x.data.name).trim()===value))throw new Error('請從教師名單選擇你的姓名。');
   return value;
 }
-function lead_(action,address,name) { return isAdmin_(address) || !!name&&action.coordinatorName===name; }
-function access_(action,address,name) { return lead_(action,address,name) || !!name&&action.classes.some(x=>x.teacherName===name); }
+function lead_(action,role,name) { return role==='admin' || !!name&&action.coordinatorName===name; }
+function access_(action,role,name) { return lead_(action,role,name) || !!name&&action.classes.some(x=>x.teacherName===name); }
 function store_() {
   const id=PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
   if (!id) throw new Error('尚未設定 SPREADSHEET_ID。');
@@ -46,41 +55,19 @@ function dateText_(v) { return v instanceof Date ? Utilities.formatDate(v,'Asia/
 function now_() { return Utilities.formatDate(new Date(),'Asia/Hong_Kong','yyyy-MM-dd HH:mm:ss'); }
 function bounded_(v,n) { const s=String(v || '').trim(); if (!s || s.length>n) throw new Error('資料不可留空，長度上限 '+n+' 字。'); return s; }
 function locked_(fn) { const l=LockService.getScriptLock(); l.waitLock(15000); try { const out=fn(); SpreadsheetApp.flush(); return out; } finally { l.releaseLock(); } }
-function initializeStorage() {
-  admin_(); const ss=store_();
+function initializeStorage(token) {
+  admin_(token); const ss=store_();
   Object.keys(HEADERS_).forEach(name=>{let sh=ss.getSheetByName(name);if(!sh)sh=ss.insertSheet(name);if(sh.getLastRow()===0)sh.appendRow(HEADERS_[name]);});
   return '已建立系統工作表。';
 }
-// Run once in the editor before deploying the name-based interface.
-function migrateTeacherEmails() {
-  admin_();return locked_(()=>{
-    const teachers=sheet_('Teachers');
-    if(String(teachers.getRange(1,2).getValue())==='defaultClass')return '已完成遷移。';
-    if(String(teachers.getRange(1,2).getValue())!=='email')throw new Error('教師名單欄位不符，已停止遷移。');
-    const map=Object.fromEntries(rows_(teachers).map(x=>[String(x.data.email||'').trim().toLowerCase(),String(x.data.name||'').trim()]));
-    const assignments=sheet_('Assignments');
-    rows_(assignments).forEach(x=>assignments.getRange(x.row,4).setValue(map[String(x.data.teacherEmail||'').trim().toLowerCase()]||''));
-    assignments.getRange(1,4).setValue('teacherName');
-    const actions=sheet_('Actions');
-    rows_(actions).forEach(x=>{
-      const classes=json_(x.data.classesJson,[]).map(c=>({id:c.id,label:c.label,teacherName:map[String(c.teacherEmail||'').toLowerCase()]||''}));
-      actions.getRange(x.row,9).setValue(JSON.stringify(classes));
-    });
-    actions.deleteColumn(7);
-    const records=sheet_('Records');
-    rows_(records).forEach(x=>records.getRange(x.row,10).setValue(map[String(x.data.checkedBy||'').trim().toLowerCase()]||''));
-    teachers.deleteColumn(2);
-    return '已移除教師電郵並改用姓名。';
-  });
-}
-function getDirectory() {
-  admin_();
+function getDirectory(token) {
+  admin_(token);
   const students=rows_(sheet_('Students')).map(({data:d})=>({classLabel:String(d.class||'').trim(),number:String(d.number||'').trim(),name:String(d.name||'').trim()}));
   const teachers=rows_(sheet_('Teachers')).map(({data:d})=>({name:String(d.name||'').trim(),defaultClass:String(d.defaultClass||'').trim()}));
   return {students,teachers};
 }
-function saveClassRoster(classLabel,students) {
-  admin_();return locked_(()=>{
+function saveClassRoster(token,classLabel,students) {
+  admin_(token);return locked_(()=>{
     const label=String(classLabel||'').trim();
     if(!/^[456][A-E]$/.test(label))throw new Error('請選擇小四至小六班別。');
     if(!Array.isArray(students)||students.length<1||students.length>60)throw new Error('每班名單須有 1 至 60 人。');
@@ -95,8 +82,8 @@ function saveClassRoster(classLabel,students) {
     return {classLabel:label,count:clean.length};
   });
 }
-function saveTeacher(entry,oldName) {
-  admin_();return locked_(()=>{
+function saveTeacher(token,entry,oldName) {
+  admin_(token);return locked_(()=>{
     const name=bounded_(entry?.name,80),defaultClass=String(entry?.defaultClass||'').trim(),old=String(oldName||'').trim();
     if(defaultClass&&!/^[1-6][A-E]$/.test(defaultClass))throw new Error('預設班別格式須如 4A。');
     const sh=sheet_('Teachers'),list=rows_(sh),match=list.find(x=>String(x.data.name).trim()===old);
@@ -107,8 +94,8 @@ function saveTeacher(entry,oldName) {
     return {name,defaultClass};
   });
 }
-function removeTeacher(name) {
-  admin_();return locked_(()=>{
+function removeTeacher(token,name) {
+  admin_(token);return locked_(()=>{
     const sh=sheet_('Teachers'),match=rows_(sh).find(x=>String(x.data.name).trim()===String(name||'').trim());
     if(!match)throw new Error('找不到教師，請重新載入名單。');
     sh.deleteRow(match.row);return true;
@@ -123,23 +110,23 @@ function view_(a,as,rs) {
   const progress=Object.fromEntries(as.map(c=>{let checked=c.selected.filter(id=>rs.some(r=>r.classId===c.classId&&r.studentId===id&&r.result)).length;return[c.classId,{total:c.sampleCount,checked,done:c.selected.length===c.sampleCount&&checked===c.sampleCount}]}));
   return {id:a.id,title:a.title,date:a.date,time:a.time,grade:a.grade,coordinatorName:a.coordinatorName,status:a.status,classes:a.classes,progress,createdAt:a.createdAt};
 }
-function getAppState(teacherName) {
-  const address=email_(), admin=isAdmin_(address), name=teacher_(teacherName),all=actions_();
+function getAppState(token,teacherName) {
+  const role=role_(token),admin=role==='admin',name=teacher_(teacherName,token),all=actions_();
   const aRows=rows_(sheet_('Assignments')),rRows=rows_(sheet_('Records'));
-  const list=all.filter(a=>admin||access_(a,address,name)).map(a=>{
+  const list=all.filter(a=>access_(a,role,name)).map(a=>{
     const as=aRows.filter(x=>String(x.data.actionId)===a.id).map(({data:d})=>({classId:String(d.classId),sampleCount:Number(d.sampleCount),selected:json_(d.selectedJson,[])}));
     const rs=rRows.filter(x=>String(x.data.actionId)===a.id).map(({data:d})=>({classId:String(d.classId),studentId:String(d.studentId),result:String(d.result)}));
     return view_(a,as,rs);
   }).sort((a,b)=>b.date.localeCompare(a.date)||b.createdAt.localeCompare(a.createdAt));
   return {admin,teacherName:name,teacherNames:rows_(sheet_('Teachers')).map(x=>String(x.data.name)),actions:list};
 }
-function getAction(id,teacherName) {
-  const address=email_(),name=teacher_(teacherName),a=action_(String(id));if(!access_(a,address,name))throw new Error('你未獲指派參與此行動。');
-  const as=assignments_(a.id),rs=records_(a.id),canLead=lead_(a,address,name);
+function getAction(token,id,teacherName) {
+  const role=role_(token),name=teacher_(teacherName,token),a=action_(String(id));if(!access_(a,role,name))throw new Error('你未獲指派參與此行動。');
+  const as=assignments_(a.id),rs=records_(a.id),canLead=lead_(a,role,name);
   return {action:view_(a,as,rs),assignments:as.filter(c=>canLead||c.teacherName===name).map(c=>({classId:c.classId,label:c.label,teacherName:c.teacherName,sampleCount:c.sampleCount,roster:c.roster,selected:c.selected,replacementLog:c.replacementLog,records:Object.fromEntries(rs.filter(r=>r.classId===c.classId).map(r=>[r.studentId,{result:r.result,issues:r.issues,remarks:r.remarks,followUp:r.followUp,followDate:r.followDate,followNotes:r.followNotes,checkedBy:r.checkedBy,checkedAt:r.checkedAt}]))})),canLead};
 }
-function createAction(payload) {
-  admin_();return locked_(()=>{
+function createAction(token,payload) {
+  admin_(token);return locked_(()=>{
     const p=payload||{},id=Utilities.getUuid(),title=bounded_(p.title,100),date=String(p.date||''),time=String(p.time||''),grade=bounded_(p.grade,30),coordinatorName=bounded_(p.coordinatorName,60);
     if(!rows_(sheet_('Teachers')).some(x=>String(x.data.name).trim()===coordinatorName))throw new Error('請從教師名單選擇統籌人。');
     if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||!/^([01]\d|2[0-3]):[0-5]\d$/.test(time))throw new Error('日期或時間格式錯誤。');
@@ -157,23 +144,23 @@ function createAction(payload) {
     return id;
   });
 }
-function editable_(id,classId,teacherName) {
-  const name=teacher_(teacherName),a=action_(id),c=assignment_(id,classId);
+function editable_(token,id,classId,teacherName) {
+  const name=teacher_(teacherName,token),a=action_(id),c=assignment_(id,classId);
   if(a.status!=='active'||!name||c.teacherName!==name)throw new Error('此行動已結束，或你不是該班負責老師。');return{a,c,name};
 }
 function pick_(roster,n) {return roster.map(s=>({id:s.id,key:Utilities.getUuid()})).sort((a,b)=>a.key.localeCompare(b.key)).slice(0,n).map(x=>x.id);}
-function drawStudents(id,classId,teacherName) {return locked_(()=>{const {c}=editable_(String(id),String(classId),teacherName);if(c.selected.length)throw new Error('這班已經抽樣。');const chosen=pick_(c.roster,c.sampleCount);const sh=sheet_('Assignments');sh.getRange(c.row,7).setValue(JSON.stringify(chosen));sh.getRange(c.row,9).setValue(now_());SpreadsheetApp.flush();return getAction(id,teacherName);});}
-function replaceAbsent(id,classId,studentId,teacherName) {return locked_(()=>{
-  const {c,name}=editable_(String(id),String(classId),teacherName),sid=String(studentId),old=c.roster.find(s=>s.id===sid);
+function drawStudents(token,id,classId,teacherName) {return locked_(()=>{const {c}=editable_(token,String(id),String(classId),teacherName);if(c.selected.length)throw new Error('這班已經抽樣。');const chosen=pick_(c.roster,c.sampleCount);const sh=sheet_('Assignments');sh.getRange(c.row,7).setValue(JSON.stringify(chosen));sh.getRange(c.row,9).setValue(now_());SpreadsheetApp.flush();return getAction(token,id,teacherName);});}
+function replaceAbsent(token,id,classId,studentId,teacherName) {return locked_(()=>{
+  const {c,name}=editable_(token,String(id),String(classId),teacherName),sid=String(studentId),old=c.roster.find(s=>s.id===sid);
   if(!old||!c.selected.includes(sid))throw new Error('學生不在抽查名單。');
   if(records_(id).some(r=>r.classId===classId&&r.studentId===sid&&r.result))throw new Error('已有檢查結果，不能標記缺席。');
   const excluded=new Set([...c.selected,...c.replacementLog.map(x=>x.out)]),available=c.roster.filter(s=>!excluded.has(s.id));
   if(!available.length)throw new Error('名單內沒有其他可抽選學生。');
   const fresh=available.find(s=>s.id===pick_(available,1)[0]),time=now_();c.selected=c.selected.map(x=>x===sid?fresh.id:x);c.replacementLog.push({out:sid,outName:old.name,in:fresh.id,inName:fresh.name,at:time,by:name});
-  const sh=sheet_('Assignments');sh.getRange(c.row,7).setValue(JSON.stringify(c.selected));sh.getRange(c.row,8).setValue(JSON.stringify(c.replacementLog));sh.getRange(c.row,9).setValue(time);SpreadsheetApp.flush();return getAction(id,teacherName);
+  const sh=sheet_('Assignments');sh.getRange(c.row,7).setValue(JSON.stringify(c.selected));sh.getRange(c.row,8).setValue(JSON.stringify(c.replacementLog));sh.getRange(c.row,9).setValue(time);SpreadsheetApp.flush();return getAction(token,id,teacherName);
 });}
-function saveResult(id,classId,studentId,data,teacherName) {return locked_(()=>{
-  const {c,name}=editable_(String(id),String(classId),teacherName),sid=String(studentId),v=data||{};
+function saveResult(token,id,classId,studentId,data,teacherName) {return locked_(()=>{
+  const {c,name}=editable_(token,String(id),String(classId),teacherName),sid=String(studentId),v=data||{};
   if(!c.selected.includes(sid))throw new Error('學生不在當前抽查名單。');
   if(!['ok','issue'].includes(v.result))throw new Error('請選擇檢查結果。');
   const issues=v.result==='issue'&&Array.isArray(v.issues)?[...new Set(v.issues)]:[];
@@ -184,11 +171,11 @@ function saveResult(id,classId,studentId,data,teacherName) {return locked_(()=>{
   const row=[id,classId,sid,v.result,JSON.stringify(issues),remarks,followUp,followDate,followNotes,name,now_()],sh=sheet_('Records');
   const existing=records_(id).find(r=>r.classId===classId&&r.studentId===sid);
   if(existing)sh.getRange(existing.row,1,1,row.length).setValues([row]);else sh.appendRow(row);
-  SpreadsheetApp.flush();return getAction(id,teacherName);
+  SpreadsheetApp.flush();return getAction(token,id,teacherName);
 });}
-function setActionStatus(id,status,teacherName) {return locked_(()=>{
-  const address=email_(),name=teacher_(teacherName),a=action_(String(id));if(!lead_(a,address,name))throw new Error('只有統籌或管理員可結束行動。');
+function setActionStatus(token,id,status,teacherName) {return locked_(()=>{
+  const role=role_(token),name=teacher_(teacherName,token),a=action_(String(id));if(!lead_(a,role,name))throw new Error('只有統籌或管理員可結束行動。');
   if(!['active','completed'].includes(status))throw new Error('狀態無效。');
-  if(status==='completed'){let detail=getAction(id,teacherName),p=detail.action.progress;if(a.classes.some(c=>!p[c.id]||!p[c.id].done))throw new Error('仍有班別未完成。');}
+  if(status==='completed'){let detail=getAction(token,id,teacherName),p=detail.action.progress;if(a.classes.some(c=>!p[c.id]||!p[c.id].done))throw new Error('仍有班別未完成。');}
   sheet_('Actions').getRange(a.row,7).setValue(status);sheet_('Actions').getRange(a.row,10).setValue(now_());return true;
 });}
