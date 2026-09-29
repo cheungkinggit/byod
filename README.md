@@ -14,7 +14,7 @@
 ## 部署（由學校 Google Workspace 管理帳戶操作）
 
 1. 在學校 Drive 建立一個**只有系統擁有人可以存取**的 Google Sheet，複製試算表 ID。老師無須直接取得 Sheet 權限。
-2. 在 [script.google.com](https://script.google.com/) 建立獨立 Apps Script 專案。把 repository 根目錄 中的 `Code.gs`、`Index.html`、`Styles.html`、`Client.html` 和 `appsscript.json` 複製到相同名稱的檔案。HTML 三個檔案在編輯器選「HTML」類型；`appsscript.json` 在專案設定開啟顯示資訊清單後編輯。
+2. 在 [script.google.com](https://script.google.com/) 建立獨立 Apps Script 專案。把這個 repository 根目錄的 `Code.gs`、`Index.html`、`Styles.html`、`Client.html` 和 `appsscript.json` 複製到相同名稱的檔案。HTML 三個檔案在編輯器選「HTML」類型；`appsscript.json` 在專案設定開啟顯示資訊清單後編輯。
 3. 在 **專案設定 → 指令碼屬性**設定：`SPREADSHEET_ID`＝試算表 ID、`SCHOOL_DOMAIN`＝學校 Google Workspace 網域（例如 `school.edu.hk`，不包含 @）、`ADMIN_EMAILS`＝一個或多個管理員的學校電郵，以英文逗號分隔。不要將這些資料加入公開 GitHub 程式碼。
 4. 用管理員帳戶在 Apps Script 編輯器執行 `initializeStorage` 一次並授權。它會建立 `Actions`、`Assignments`、`Records` 三個工作表。
 5. **部署 → 新部署 → 網頁應用程式**：執行身分選「我」；可存取對象選「機構內所有使用者」。部署者必須與老師屬於同一 Google Workspace 網域。複製部署後的 `/exec` 網址予負責老師。
