@@ -2,6 +2,8 @@
 
 手機優先的 Google Apps Script 網頁。前端只有一個 [`Index.html`](Index.html)，內含畫面、樣式及互動；[`Code.gs`](Code.gs) 處理密碼核對、權限及資料同步。學生資料只寫入學校控制的 Google Sheet。相片中的[工作指引文字版](WORK_GUIDE.md)已放到每頁底部的可收合區塊；預設收起。
 
+手機可用 Safari 或 Chrome 開啟[公開網頁連結](https://script.google.com/macros/s/AKfycbzwfTjtVa1KhvBHLmSpYCx2YGazh6lIhqcJX8rSvbBq0lyVfjhxXc_caZEdUAJ9Mj1kFw/exec)，毋須先登入學校 Google 帳戶。此網址目前仍顯示舊部署的「只輸入密碼」畫面；GitHub 原始碼更新後，須在 Apps Script 建立新部署版本，才會顯示下述「登入名稱＋密碼」新版。請勿把目前舊版當成新版測試。
+
 ## 功能
 
 - 管理員按日期、時間及年級建立行動，可從私人資料表帶入整級班別、學生名單與班主任，再調整負責老師及各班抽查人數（預設五人）。
