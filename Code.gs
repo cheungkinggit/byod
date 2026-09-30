@@ -135,9 +135,9 @@ function view_(a,as,rs) {
   const progress=Object.fromEntries(as.map(c=>{let checked=c.selected.filter(id=>completed.has(c.classId+':'+id)).length;return[c.classId,{total:c.sampleCount,checked,done:c.selected.length===c.sampleCount&&checked===c.sampleCount}]}));
   return {id:a.id,title:a.title,date:a.date,time:a.time,grade:a.grade,coordinatorName:a.coordinatorName,status:a.status,classes:a.classes,progress,createdAt:a.createdAt};
 }
-function getAppState(token,teacherName) {
+function getAppState(token,teacherName,actionId) {
   const session=session_(token),role=session.role,admin=role==='admin',name=admin?'':session.name?teacher_(teacherName,token):'';
-  return cached_('state:'+role+':'+name,()=>{
+  const state=cached_('state:'+role+':'+name,()=>{
     const all=actions_(),teacherOptions=admin?[]:[...new Set(all.flatMap(a=>a.classes.map(c=>c.teacherName)))].filter(Boolean).sort();
     if(!admin&&!name)return {admin:false,teacherName:'',teacherOptions,actions:[]};
     const asById=new Map(),rsById=new Map();
@@ -146,6 +146,7 @@ function getAppState(token,teacherName) {
     const actions=all.filter(a=>access_(a,role,name)).map(a=>view_(a,asById.get(a.id)||[],rsById.get(a.id)||[])).sort((a,b)=>b.date.localeCompare(a.date)||b.createdAt.localeCompare(a.createdAt));
     return {admin,teacherName:name,teacherOptions,actions,directory:admin?getDirectory(token):undefined};
   },20);
+  return actionId?{...state,detail:getAction(token,actionId)}:state;
 }
 function getAction(token,id,teacherName) {
   const role=role_(token),name=teacher_(teacherName,token);
