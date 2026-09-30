@@ -20,9 +20,8 @@ function login(loginName,password) {
   if(!salt||!adminHash||!teacherHash)throw new Error('系統密碼尚未設定，請聯絡管理員。');
   const username=String(loginName||'').trim(),value=String(password||'');
   if(!username||value.length<8||value.length>128)throw new Error('登入名稱或密碼不正確。');
-  const hash=passwordHash_(value,salt),isAdmin=username.toLowerCase()==='ltmps';
-  const teacher=!isAdmin&&rows_(sheet_('Teachers')).some(x=>String(x.data.name).trim()===username);
-  const session=isAdmin&&hash===adminHash?{role:'admin',name:''}:teacher&&hash===teacherHash?{role:'teacher',name:username}:null;
+  const hash=passwordHash_(value,salt),account=username.toLowerCase();
+  const session=account==='admin'&&hash===adminHash?{role:'admin',name:''}:account==='byod'&&hash===teacherHash?{role:'teacher',name:''}:null;
   if(!session)throw new Error('登入名稱或密碼不正確。');
   const token=Utilities.getUuid();CacheService.getScriptCache().put('session:'+token,JSON.stringify(session),21600);
   return {token,role:session.role,name:session.name};
@@ -36,9 +35,16 @@ function session_(token) {
 function role_(token) {return session_(token).role;}
 function logout(token) {role_(token);CacheService.getScriptCache().remove('session:'+token);return true;}
 function admin_(token) {if(role_(token)!=='admin')throw new Error('只有管理員可以執行此操作。');}
+function selectTeacher(token,name) {
+  const session=session_(token),teacher=String(name||'').trim();
+  if(session.role!=='teacher'||!rows_(sheet_('Teachers')).some(x=>String(x.data.name).trim()===teacher))throw new Error('請選擇教師名單上的負責老師。');
+  session.name=teacher;CacheService.getScriptCache().put('session:'+token,JSON.stringify(session),21600);
+  return true;
+}
 function teacher_(name,token) {
   const session=session_(token);
   if(session.role==='admin')return '';
+  if(!session.name)throw new Error('請先選擇負責老師。');
   if(!rows_(sheet_('Teachers')).some(x=>String(x.data.name).trim()===session.name))throw new Error('教師帳戶已停用，請聯絡管理員。');
   return session.name;
 }
@@ -115,14 +121,17 @@ function view_(a,as,rs) {
   return {id:a.id,title:a.title,date:a.date,time:a.time,grade:a.grade,coordinatorName:a.coordinatorName,status:a.status,classes:a.classes,progress,createdAt:a.createdAt};
 }
 function getAppState(token,teacherName) {
-  const role=role_(token),admin=role==='admin',name=teacher_(teacherName,token),all=actions_();
+  const session=session_(token),role=session.role,admin=role==='admin',all=actions_();
+  const teacherOptions=[...new Set(all.flatMap(a=>a.classes.map(c=>c.teacherName)))].filter(Boolean).sort();
+  if(!admin&&!session.name)return {admin:false,teacherName:'',teacherOptions,actions:[]};
+  const name=teacher_(teacherName,token);
   const aRows=rows_(sheet_('Assignments')),rRows=rows_(sheet_('Records'));
   const list=all.filter(a=>access_(a,role,name)).map(a=>{
     const as=aRows.filter(x=>String(x.data.actionId)===a.id).map(({data:d})=>({classId:String(d.classId),sampleCount:Number(d.sampleCount),selected:json_(d.selectedJson,[])}));
     const rs=rRows.filter(x=>String(x.data.actionId)===a.id).map(({data:d})=>({classId:String(d.classId),studentId:String(d.studentId),result:String(d.result)}));
     return view_(a,as,rs);
   }).sort((a,b)=>b.date.localeCompare(a.date)||b.createdAt.localeCompare(a.createdAt));
-  return {admin,teacherName:name,actions:list};
+  return {admin,teacherName:name,teacherOptions:admin?[]:teacherOptions,actions:list};
 }
 function getAction(token,id,teacherName) {
   const role=role_(token),name=teacher_(teacherName,token),a=action_(String(id));if(!access_(a,role,name))throw new Error('你未獲指派參與此行動。');
@@ -136,7 +145,8 @@ function createAction(token,payload) {
     if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||!/^([01]\d|2[0-3]):[0-5]\d$/.test(time))throw new Error('日期或時間格式錯誤。');
     if(!Array.isArray(p.classes)||p.classes.length<1||p.classes.length>15)throw new Error('每次須有 1 至 15 班。');
     const teacherNames=new Set(rows_(sheet_('Teachers')).map(x=>String(x.data.name).trim()));
-    const used=new Set(),cls=p.classes.map((c,i)=>{let label=bounded_(c.label,20),teacherName=bounded_(c.teacherName,80),roster=Array.isArray(c.roster)?c.roster:[],n=Number(c.sampleCount);
+    const studentsByClass=rows_(sheet_('Students')).map(x=>x.data);
+    const used=new Set(),cls=p.classes.map((c,i)=>{let label=bounded_(c.label,20),teacherName=bounded_(c.teacherName,80),roster=studentsByClass.filter(s=>String(s.class).trim()===label),n=Number(c.sampleCount);
       if(!teacherNames.has(teacherName))throw new Error(label+'：請從教師名單選擇負責老師。');
       if(used.has(label))throw new Error('班別不能重複。');used.add(label);
       if(roster.length<1||roster.length>60||!Number.isInteger(n)||n<1||n>roster.length)throw new Error(label+'：抽查人數或學生人數不合規格。');
@@ -153,7 +163,7 @@ function editable_(token,id,classId,teacherName) {
   if(a.status!=='active'||!name||c.teacherName!==name)throw new Error('此行動已結束，或你不是該班負責老師。');return{a,c,name};
 }
 function pick_(roster,n) {return roster.map(s=>({id:s.id,key:Utilities.getUuid()})).sort((a,b)=>a.key.localeCompare(b.key)).slice(0,n).map(x=>x.id);}
-function drawStudents(token,id,classId,teacherName) {return locked_(()=>{const {c}=editable_(token,String(id),String(classId),teacherName);if(c.selected.length)throw new Error('這班已經抽樣。');const chosen=pick_(c.roster,c.sampleCount);const sh=sheet_('Assignments');sh.getRange(c.row,7).setValue(JSON.stringify(chosen));sh.getRange(c.row,9).setValue(now_());SpreadsheetApp.flush();return getAction(token,id,teacherName);});}
+function drawStudents(token,id,classId) {admin_(token);return locked_(()=>{const a=action_(String(id)),c=assignment_(String(id),String(classId));if(a.status!=='active'||c.selected.length)throw new Error('此班已抽籤，或行動已結束。');const chosen=pick_(c.roster,c.sampleCount);const sh=sheet_('Assignments');sh.getRange(c.row,7).setValue(JSON.stringify(chosen));sh.getRange(c.row,9).setValue(now_());SpreadsheetApp.flush();return getAction(token,id);});}
 function replaceAbsent(token,id,classId,studentId,teacherName) {return locked_(()=>{
   const {c,name}=editable_(token,String(id),String(classId),teacherName),sid=String(studentId),old=c.roster.find(s=>s.id===sid);
   if(!old||!c.selected.includes(sid))throw new Error('學生不在抽查名單。');
@@ -177,8 +187,8 @@ function saveResult(token,id,classId,studentId,data,teacherName) {return locked_
   if(existing)sh.getRange(existing.row,1,1,row.length).setValues([row]);else sh.appendRow(row);
   SpreadsheetApp.flush();return getAction(token,id,teacherName);
 });}
-function setActionStatus(token,id,status,teacherName) {return locked_(()=>{
-  const role=role_(token),name=teacher_(teacherName,token),a=action_(String(id));if(!lead_(a,role,name))throw new Error('只有統籌或管理員可結束行動。');
+function setActionStatus(token,id,status,teacherName) {admin_(token);return locked_(()=>{
+  const a=action_(String(id));
   if(!['active','completed'].includes(status))throw new Error('狀態無效。');
   if(status==='completed'){let detail=getAction(token,id,teacherName),p=detail.action.progress;if(a.classes.some(c=>!p[c.id]||!p[c.id].done))throw new Error('仍有班別未完成。');}
   sheet_('Actions').getRange(a.row,7).setValue(status);sheet_('Actions').getRange(a.row,10).setValue(now_());return true;
