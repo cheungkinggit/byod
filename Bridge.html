@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><title>BYOD connection</title></head>
+<head><meta charset="utf-8"><title>BYOD connection v2</title></head>
 <body>
 <script>
 (() => {
@@ -10,8 +10,8 @@
   const methods = new Set([
     'login', 'logout', 'selectTeacher', 'getAppState', 'getDirectory',
     'saveClassRoster', 'saveTeacher', 'removeTeacher', 'getAction',
-    'createAction', 'drawStudents', 'replaceAbsent', 'saveResult',
-    'setActionStatus'
+    'createAction', 'deleteAction', 'drawStudents', 'replaceAbsent',
+    'saveResult', 'setActionStatus'
   ]);
   const reply = (id, ok, value) => {
     window.top.postMessage({type:'BYOD_RESPONSE', nonce, id, ok, value}, parentOrigin);
