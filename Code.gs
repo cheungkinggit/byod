@@ -57,9 +57,10 @@ function store_() {
   if (!id) throw new Error('尚未設定 SPREADSHEET_ID。');
   return spreadsheet_=SpreadsheetApp.openById(id);
 }
-function rows_(sheet) {
-  const values=sheet.getDataRange().getValues(), keys=values.shift() || [];
-  return values.map((row,i)=>({row:i+2,data:Object.fromEntries(keys.map((k,j)=>[k,row[j]]))})).filter(x=>x.data[keys[0]]);
+function rows_(sheet,displayKeys=[]) {
+  const range=sheet.getDataRange(),values=range.getValues(),keys=values.shift() || [];
+  const display=displayKeys.length?range.getDisplayValues().slice(1):null;
+  return values.map((row,i)=>({row:i+2,data:Object.fromEntries(keys.map((k,j)=>[k,displayKeys.includes(k)?display[i][j]:row[j]]))})).filter(x=>x.data[keys[0]]);
 }
 function sheet_(name) { const sh=store_().getSheetByName(name); if (!sh) throw new Error('缺少 '+name+' 工作表，請先執行 initializeStorage。'); return sh; }
 function json_(v,fallback) { try { return JSON.parse(String(v)); } catch(e) { return fallback; } }
@@ -125,7 +126,7 @@ function removeTeacher(token,name) {
     sh.deleteRow(match.row);return true;
   },true);
 }
-function actions_() { return rows_(sheet_('Actions')).map(({row,data:d})=>({row,id:String(d.id),title:String(d.title),date:dateText_(d.date),time:String(d.time||''),grade:String(d.grade),coordinatorName:String(d.coordinatorName),status:String(d.status),classes:json_(d.classesJson,[]),createdAt:String(d.createdAt),updatedAt:String(d.updatedAt)})); }
+function actions_() { return rows_(sheet_('Actions'),['time']).map(({row,data:d})=>({row,id:String(d.id),title:String(d.title),date:dateText_(d.date),time:String(d.time||'').replace(/^(\d{1,2}:\d{2}):\d{2}$/, '$1'),grade:String(d.grade),coordinatorName:String(d.coordinatorName),status:String(d.status),classes:json_(d.classesJson,[]),createdAt:String(d.createdAt),updatedAt:String(d.updatedAt)})); }
 function action_(id) { const a=actions_().find(x=>x.id===id);if(!a)throw new Error('找不到行動。');return a; }
 function assignments_(id) {return rows_(sheet_('Assignments')).filter(x=>String(x.data.actionId)===id).map(({row,data:d})=>({row,actionId:String(d.actionId),classId:String(d.classId),label:String(d.label),teacherName:String(d.teacherName),sampleCount:Number(d.sampleCount),roster:json_(d.rosterJson,[]),selected:json_(d.selectedJson,[]),replacementLog:json_(d.replacementJson,[])}));}
 function assignment_(id,classId) {let a=assignments_(id).find(x=>x.classId===classId);if(!a)throw new Error('找不到班別。');return a;}
