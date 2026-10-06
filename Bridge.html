@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>BYOD connection</title></head>
+<body>
+<script>
+(() => {
+  'use strict';
+  const parentOrigin = 'https://cheungkinggit.github.io';
+  const nonce = <?!= JSON.stringify(nonce) ?>;
+  const methods = new Set([
+    'login', 'logout', 'selectTeacher', 'getAppState', 'getDirectory',
+    'saveClassRoster', 'saveTeacher', 'removeTeacher', 'getAction',
+    'createAction', 'drawStudents', 'replaceAbsent', 'saveResult',
+    'setActionStatus'
+  ]);
+  const reply = (id, ok, value) => {
+    window.top.postMessage({type:'BYOD_RESPONSE', nonce, id, ok, value}, parentOrigin);
+  };
+  window.addEventListener('message', event => {
+    if (event.origin !== parentOrigin || event.source !== window.top) return;
+    const data = event.data;
+    if (!data || data.type !== 'BYOD_REQUEST' || data.nonce !== nonce) return;
+    const {id, method, args} = data;
+    if (typeof id !== 'string' || !/^[a-z0-9-]{1,80}$/.test(id)) return;
+    if (!methods.has(method) || !Array.isArray(args)) {
+      reply(id, false, '無效的系統操作。');
+      return;
+    }
+    try {
+      google.script.run
+        .withSuccessHandler(result => reply(id, true, result))
+        .withFailureHandler(error => reply(id, false, error && error.message || String(error)))
+        [method](...args);
+    } catch (error) {
+      reply(id, false, error && error.message || String(error));
+    }
+  });
+  window.top.postMessage({type:'BYOD_READY', nonce}, parentOrigin);
+})();
+</script>
+</body>
+</html>
