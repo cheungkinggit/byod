@@ -13,7 +13,7 @@ function doGet(e) {
     if(!/^[0-9a-f]{32}$/.test(nonce))return HtmlService.createHtmlOutput('Invalid request');
     const page=HtmlService.createTemplateFromFile('Bridge');
     page.nonce=nonce;
-    return page.evaluate().setTitle('BYOD connection')
+    return page.evaluate().setTitle('BYOD connection v2')
       .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
   }
   return HtmlService.createHtmlOutputFromFile('Index')
@@ -139,6 +139,27 @@ function action_(id) { const a=actions_().find(x=>x.id===id);if(!a)throw new Err
 function assignments_(id) {return rows_(sheet_('Assignments')).filter(x=>String(x.data.actionId)===id).map(({row,data:d})=>({row,actionId:String(d.actionId),classId:String(d.classId),label:String(d.label),teacherName:String(d.teacherName),sampleCount:Number(d.sampleCount),roster:json_(d.rosterJson,[]),selected:json_(d.selectedJson,[]),replacementLog:json_(d.replacementJson,[])}));}
 function assignment_(id,classId) {let a=assignments_(id).find(x=>x.classId===classId);if(!a)throw new Error('找不到班別。');return a;}
 function records_(id) {return rows_(sheet_('Records')).filter(x=>String(x.data.actionId)===id).map(({row,data:d})=>({row,actionId:String(d.actionId),classId:String(d.classId),studentId:String(d.studentId),result:String(d.result),issues:json_(d.issuesJson,[]),remarks:String(d.remarks||''),followUp:d.followUp===true||String(d.followUp).toLowerCase()==='true',followDate:dateText_(d.followDate),followNotes:String(d.followNotes||''),checkedBy:String(d.checkedBy),checkedAt:String(d.checkedAt)}));}
+function previousFollowUps_(a,visibleAssignments) {
+  const priorActions=actions_().filter(x=>x.row<a.row).sort((x,y)=>y.row-x.row);
+  const cachedDetails=new Map();
+  return visibleAssignments.flatMap(current=>{
+    const previous=priorActions.find(x=>x.classes.some(c=>c.label===current.label));
+    if(!previous)return [];
+    if(!cachedDetails.has(previous.id))cachedDetails.set(previous.id,{
+      assignments:assignments_(previous.id),records:records_(previous.id)
+    });
+    const detail=cachedDetails.get(previous.id),c=detail.assignments.find(x=>x.label===current.label);
+    if(!c)return [];
+    const students=new Map(c.roster.map(s=>[s.id,s]));
+    return detail.records.filter(r=>r.classId===c.classId&&r.followUp).map(r=>{
+      const student=students.get(r.studentId);
+      if(!student)return null;
+      return {classLabel:c.label,number:student.number||'',name:student.name,
+        followDate:r.followDate,followNotes:r.followNotes,
+        previousActionTitle:previous.title,previousActionDate:previous.date};
+    }).filter(Boolean);
+  });
+}
 function view_(a,as,rs) {
   const completed=new Set(rs.filter(r=>r.result).map(r=>r.classId+':'+r.studentId));
   const progress=Object.fromEntries(as.map(c=>{let checked=c.selected.filter(id=>completed.has(c.classId+':'+id)).length;return[c.classId,{total:c.sampleCount,checked,done:c.selected.length===c.sampleCount&&checked===c.sampleCount}]}));
@@ -162,7 +183,20 @@ function getAction(token,id,teacherName) {
   const detail=cached_('action:'+String(id),()=>({a:action_(String(id)),as:assignments_(String(id)),rs:records_(String(id))}),20);
   const {a,as,rs}=detail;if(!access_(a,role,name))throw new Error('你未獲指派參與此行動。');
   const canLead=lead_(a,role,name);
-  return {action:view_(a,as,rs),assignments:as.filter(c=>canLead||c.teacherName===name).map(c=>({classId:c.classId,label:c.label,teacherName:c.teacherName,sampleCount:c.sampleCount,roster:c.roster,selected:c.selected,replacementLog:c.replacementLog,records:Object.fromEntries(rs.filter(r=>r.classId===c.classId).map(r=>[r.studentId,{result:r.result,issues:r.issues,remarks:r.remarks,followUp:r.followUp,followDate:r.followDate,followNotes:r.followNotes,checkedBy:r.checkedBy,checkedAt:r.checkedAt}]))})),canLead};
+  const visibleAssignments=as.filter(c=>canLead||c.teacherName===name);
+  return {action:view_(a,as,rs),assignments:visibleAssignments.map(c=>({classId:c.classId,label:c.label,teacherName:c.teacherName,sampleCount:c.sampleCount,roster:c.roster,selected:c.selected,replacementLog:c.replacementLog,records:Object.fromEntries(rs.filter(r=>r.classId===c.classId).map(r=>[r.studentId,{result:r.result,issues:r.issues,remarks:r.remarks,followUp:r.followUp,followDate:r.followDate,followNotes:r.followNotes,checkedBy:r.checkedBy,checkedAt:r.checkedAt}]))})),priorFollowUps:previousFollowUps_(a,visibleAssignments),canLead};
+}
+function deleteAction(token,id) {
+  admin_(token);return locked_(()=>{
+    const a=action_(String(id));
+    ['Records','Assignments'].forEach(name=>{
+      const sh=sheet_(name);
+      rows_(sh).filter(x=>String(x.data.actionId)===a.id)
+        .map(x=>x.row).sort((x,y)=>y-x).forEach(row=>sh.deleteRow(row));
+    });
+    sheet_('Actions').deleteRow(a.row);
+    return true;
+  });
 }
 function createAction(token,payload) {
   admin_(token);return locked_(()=>{
@@ -202,10 +236,10 @@ function replaceAbsent(token,id,classId,studentId,teacherName) {locked_(()=>{
 function saveResult(token,id,classId,studentId,data,teacherName) {locked_(()=>{
   const {c,name}=editable_(token,String(id),String(classId),teacherName),sid=String(studentId),v=data||{};
   if(!c.selected.includes(sid))throw new Error('學生不在當前抽查名單。');
-  if(!['ok','issue'].includes(v.result))throw new Error('請選擇檢查結果。');
+  if(!['ok','issue','absent'].includes(v.result))throw new Error('請選擇檢查結果。');
   const issues=v.result==='issue'&&Array.isArray(v.issues)?[...new Set(v.issues)]:[];
   if(v.result==='issue'&&(!issues.length||issues.some(x=>!ISSUES_.includes(x))))throw new Error('請選擇最少一項有效問題。');
-  const remarks=String(v.remarks||'').trim(),followUp=v.followUp===true,followDate=followUp?String(v.followDate||''):'',followNotes=followUp?String(v.followNotes||'').trim():'';
+  const absent=v.result==='absent',remarks=absent?'':String(v.remarks||'').trim(),followUp=!absent&&v.followUp===true,followDate=followUp?String(v.followDate||''):'',followNotes=followUp?String(v.followNotes||'').trim():'';
   if(remarks.length>1000||followNotes.length>1000)throw new Error('備註不可超過 1000 字。');
   if(followUp&&(!/^\d{4}-\d{2}-\d{2}$/.test(followDate)||!followNotes))throw new Error('請填妥跟進日期及備註。');
   const row=[id,classId,sid,v.result,JSON.stringify(issues),remarks,followUp,followDate,followNotes,name,now_()],sh=sheet_('Records');
