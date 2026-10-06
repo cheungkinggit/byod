@@ -13,7 +13,7 @@ function doGet(e) {
     if(!/^[0-9a-f]{32}$/.test(nonce))return HtmlService.createHtmlOutput('Invalid request');
     const page=HtmlService.createTemplateFromFile('Bridge');
     page.nonce=nonce;
-    return page.evaluate().setTitle('BYOD connection v2')
+    return page.evaluate().setTitle('BYOD connection v3')
       .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
   }
   return HtmlService.createHtmlOutputFromFile('Index')
@@ -136,22 +136,20 @@ function removeTeacher(token,name) {
 }
 function actions_() { return rows_(sheet_('Actions'),['time']).map(({row,data:d})=>({row,id:String(d.id),title:String(d.title),date:dateText_(d.date),time:String(d.time||'').replace(/^(\d{1,2}:\d{2}):\d{2}$/, '$1'),grade:String(d.grade),coordinatorName:String(d.coordinatorName),status:String(d.status),classes:json_(d.classesJson,[]),createdAt:String(d.createdAt),updatedAt:String(d.updatedAt)})); }
 function action_(id) { const a=actions_().find(x=>x.id===id);if(!a)throw new Error('找不到行動。');return a; }
-function assignments_(id) {return rows_(sheet_('Assignments')).filter(x=>String(x.data.actionId)===id).map(({row,data:d})=>({row,actionId:String(d.actionId),classId:String(d.classId),label:String(d.label),teacherName:String(d.teacherName),sampleCount:Number(d.sampleCount),roster:json_(d.rosterJson,[]),selected:json_(d.selectedJson,[]),replacementLog:json_(d.replacementJson,[])}));}
+function allAssignments_() {return rows_(sheet_('Assignments')).map(({row,data:d})=>({row,actionId:String(d.actionId),classId:String(d.classId),label:String(d.label),teacherName:String(d.teacherName),sampleCount:Number(d.sampleCount),roster:json_(d.rosterJson,[]),selected:json_(d.selectedJson,[]),replacementLog:json_(d.replacementJson,[])}));}
+function assignments_(id) {return allAssignments_().filter(x=>x.actionId===id);}
 function assignment_(id,classId) {let a=assignments_(id).find(x=>x.classId===classId);if(!a)throw new Error('找不到班別。');return a;}
-function records_(id) {return rows_(sheet_('Records')).filter(x=>String(x.data.actionId)===id).map(({row,data:d})=>({row,actionId:String(d.actionId),classId:String(d.classId),studentId:String(d.studentId),result:String(d.result),issues:json_(d.issuesJson,[]),remarks:String(d.remarks||''),followUp:d.followUp===true||String(d.followUp).toLowerCase()==='true',followDate:dateText_(d.followDate),followNotes:String(d.followNotes||''),checkedBy:String(d.checkedBy),checkedAt:String(d.checkedAt)}));}
-function previousFollowUps_(a,visibleAssignments) {
-  const priorActions=actions_().filter(x=>x.row<a.row).sort((x,y)=>y.row-x.row);
-  const cachedDetails=new Map();
+function allRecords_() {return rows_(sheet_('Records')).map(({row,data:d})=>({row,actionId:String(d.actionId),classId:String(d.classId),studentId:String(d.studentId),result:String(d.result),issues:json_(d.issuesJson,[]),remarks:String(d.remarks||''),followUp:d.followUp===true||String(d.followUp).toLowerCase()==='true',followDate:dateText_(d.followDate),followNotes:String(d.followNotes||''),checkedBy:String(d.checkedBy),checkedAt:String(d.checkedAt)}));}
+function records_(id) {return allRecords_().filter(x=>x.actionId===id);}
+function previousFollowUps_(a,visibleAssignments,allActions,allAssignments,allRecords) {
+  const priorActions=allActions.filter(x=>x.row<a.row).sort((x,y)=>y.row-x.row);
   return visibleAssignments.flatMap(current=>{
     const previous=priorActions.find(x=>x.classes.some(c=>c.label===current.label));
     if(!previous)return [];
-    if(!cachedDetails.has(previous.id))cachedDetails.set(previous.id,{
-      assignments:assignments_(previous.id),records:records_(previous.id)
-    });
-    const detail=cachedDetails.get(previous.id),c=detail.assignments.find(x=>x.label===current.label);
+    const c=allAssignments.find(x=>x.actionId===previous.id&&x.label===current.label);
     if(!c)return [];
     const students=new Map(c.roster.map(s=>[s.id,s]));
-    return detail.records.filter(r=>r.classId===c.classId&&r.followUp).map(r=>{
+    return allRecords.filter(r=>r.actionId===previous.id&&r.classId===c.classId&&r.followUp).map(r=>{
       const student=students.get(r.studentId);
       if(!student)return null;
       return {classLabel:c.label,number:student.number||'',name:student.name,
@@ -180,11 +178,18 @@ function getAppState(token,teacherName,actionId) {
 }
 function getAction(token,id,teacherName) {
   const role=role_(token),name=teacher_(teacherName,token);
-  const detail=cached_('action:'+String(id),()=>({a:action_(String(id)),as:assignments_(String(id)),rs:records_(String(id))}),20);
-  const {a,as,rs}=detail;if(!access_(a,role,name))throw new Error('你未獲指派參與此行動。');
+  const detail=cached_('action:'+String(id),()=>{
+    const allActions=actions_(),a=allActions.find(x=>x.id===String(id));
+    if(!a)throw new Error('找不到行動。');
+    const allAssignments=allAssignments_(),allRecords=allRecords_();
+    const as=allAssignments.filter(x=>x.actionId===a.id),rs=allRecords.filter(x=>x.actionId===a.id);
+    return {a,as,rs,priorFollowUps:previousFollowUps_(a,as,allActions,allAssignments,allRecords)};
+  },20);
+  const {a,as,rs,priorFollowUps}=detail;if(!access_(a,role,name))throw new Error('你未獲指派參與此行動。');
   const canLead=lead_(a,role,name);
   const visibleAssignments=as.filter(c=>canLead||c.teacherName===name);
-  return {action:view_(a,as,rs),assignments:visibleAssignments.map(c=>({classId:c.classId,label:c.label,teacherName:c.teacherName,sampleCount:c.sampleCount,roster:c.roster,selected:c.selected,replacementLog:c.replacementLog,records:Object.fromEntries(rs.filter(r=>r.classId===c.classId).map(r=>[r.studentId,{result:r.result,issues:r.issues,remarks:r.remarks,followUp:r.followUp,followDate:r.followDate,followNotes:r.followNotes,checkedBy:r.checkedBy,checkedAt:r.checkedAt}]))})),priorFollowUps:previousFollowUps_(a,visibleAssignments),canLead};
+  const visibleLabels=new Set(visibleAssignments.map(c=>c.label));
+  return {action:view_(a,as,rs),assignments:visibleAssignments.map(c=>({classId:c.classId,label:c.label,teacherName:c.teacherName,sampleCount:c.sampleCount,roster:c.roster,selected:c.selected,replacementLog:c.replacementLog,records:Object.fromEntries(rs.filter(r=>r.classId===c.classId).map(r=>[r.studentId,{result:r.result,issues:r.issues,remarks:r.remarks,followUp:r.followUp,followDate:r.followDate,followNotes:r.followNotes,checkedBy:r.checkedBy,checkedAt:r.checkedAt}]))})),priorFollowUps:priorFollowUps.filter(x=>visibleLabels.has(x.classLabel)),canLead};
 }
 function deleteAction(token,id) {
   admin_(token);return locked_(()=>{
