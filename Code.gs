@@ -13,7 +13,7 @@ function doGet(e) {
     if(!/^[0-9a-f]{32}$/.test(nonce))return HtmlService.createHtmlOutput('Invalid request');
     const page=HtmlService.createTemplateFromFile('Bridge');
     page.nonce=nonce;
-    return page.evaluate().setTitle('BYOD connection v3')
+    return page.evaluate().setTitle('BYOD connection v4')
       .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
   }
   return HtmlService.createHtmlOutputFromFile('Index')
@@ -228,8 +228,8 @@ function editable_(token,id,classId,teacherName) {
   if(a.status!=='active'||!name||c.teacherName!==name)throw new Error('此行動已結束，或你不是該班負責老師。');return{a,c,name};
 }
 function pick_(roster,n) {return roster.map(s=>({id:s.id,key:Utilities.getUuid()})).sort((a,b)=>a.key.localeCompare(b.key)).slice(0,n).map(x=>x.id);}
-function drawStudents(token,id,classId) {admin_(token);locked_(()=>{const a=action_(String(id)),c=assignment_(String(id),String(classId));if(a.status!=='active'||c.selected.length)throw new Error('此班已抽籤，或行動已結束。');const chosen=pick_(c.roster,c.sampleCount);const sh=sheet_('Assignments');sh.getRange(c.row,7).setValue(JSON.stringify(chosen));sh.getRange(c.row,9).setValue(now_());});return getAction(token,id);}
-function replaceAbsent(token,id,classId,studentId,teacherName) {locked_(()=>{
+function drawStudents(token,id,classId,fast) {admin_(token);const result=locked_(()=>{const a=action_(String(id)),c=assignment_(String(id),String(classId));if(a.status!=='active'||c.selected.length)throw new Error('此班已抽籤，或行動已結束。');const chosen=pick_(c.roster,c.sampleCount);const sh=sheet_('Assignments');sh.getRange(c.row,7).setValue(JSON.stringify(chosen));sh.getRange(c.row,9).setValue(now_());return {classId:c.classId,selected:chosen};});return fast===true?result:getAction(token,id);}
+function replaceAbsent(token,id,classId,studentId,teacherName,fast) {const result=locked_(()=>{
   const {c,name}=editable_(token,String(id),String(classId),teacherName),sid=String(studentId),old=c.roster.find(s=>s.id===sid);
   if(!old||!c.selected.includes(sid))throw new Error('學生不在抽查名單。');
   if(records_(id).some(r=>r.classId===classId&&r.studentId===sid&&r.result))throw new Error('已有檢查結果，不能標記缺席。');
@@ -237,8 +237,9 @@ function replaceAbsent(token,id,classId,studentId,teacherName) {locked_(()=>{
   if(!available.length)throw new Error('名單內沒有其他可抽選學生。');
   const fresh=available.find(s=>s.id===pick_(available,1)[0]),time=now_();c.selected=c.selected.map(x=>x===sid?fresh.id:x);c.replacementLog.push({out:sid,outName:old.name,in:fresh.id,inName:fresh.name,at:time,by:name});
   const sh=sheet_('Assignments');sh.getRange(c.row,7).setValue(JSON.stringify(c.selected));sh.getRange(c.row,8).setValue(JSON.stringify(c.replacementLog));sh.getRange(c.row,9).setValue(time);
-});return getAction(token,id,teacherName);}
-function saveResult(token,id,classId,studentId,data,teacherName) {locked_(()=>{
+  return {classId:c.classId,selected:c.selected,replacementLog:c.replacementLog};
+});return fast===true?result:getAction(token,id,teacherName);}
+function saveResult(token,id,classId,studentId,data,teacherName,fast) {const result=locked_(()=>{
   const {c,name}=editable_(token,String(id),String(classId),teacherName),sid=String(studentId),v=data||{};
   if(!c.selected.includes(sid))throw new Error('學生不在當前抽查名單。');
   if(!['ok','issue','absent'].includes(v.result))throw new Error('請選擇檢查結果。');
@@ -247,13 +248,14 @@ function saveResult(token,id,classId,studentId,data,teacherName) {locked_(()=>{
   const absent=v.result==='absent',remarks=absent?'':String(v.remarks||'').trim(),followUp=!absent&&v.followUp===true,followDate=followUp?String(v.followDate||''):'',followNotes=followUp?String(v.followNotes||'').trim():'';
   if(remarks.length>1000||followNotes.length>1000)throw new Error('備註不可超過 1000 字。');
   if(followUp&&(!/^\d{4}-\d{2}-\d{2}$/.test(followDate)||!followNotes))throw new Error('請填妥跟進日期及備註。');
-  const row=[id,classId,sid,v.result,JSON.stringify(issues),remarks,followUp,followDate,followNotes,name,now_()],sh=sheet_('Records');
+  const checkedAt=now_(),row=[id,classId,sid,v.result,JSON.stringify(issues),remarks,followUp,followDate,followNotes,name,checkedAt],sh=sheet_('Records');
   const existing=records_(id).find(r=>r.classId===classId&&r.studentId===sid);
   if(existing)sh.getRange(existing.row,1,1,row.length).setValues([row]);else sh.appendRow(row);
-});return getAction(token,id,teacherName);}
+  return {classId:c.classId,studentId:sid,record:{result:v.result,issues,remarks,followUp,followDate,followNotes,checkedBy:name,checkedAt}};
+});return fast===true?result:getAction(token,id,teacherName);}
 function setActionStatus(token,id,status,teacherName) {admin_(token);return locked_(()=>{
   const a=action_(String(id));
   if(!['active','completed'].includes(status))throw new Error('狀態無效。');
-  if(status==='completed'){let detail=getAction(token,id,teacherName),p=detail.action.progress;if(a.classes.some(c=>!p[c.id]||!p[c.id].done))throw new Error('仍有班別未完成。');}
+  if(status==='completed'){const p=view_(a,assignments_(a.id),records_(a.id)).progress;if(a.classes.some(c=>!p[c.id]||!p[c.id].done))throw new Error('仍有班別未完成。');}
   sheet_('Actions').getRange(a.row,7).setValue(status);sheet_('Actions').getRange(a.row,10).setValue(now_());return true;
 });}
