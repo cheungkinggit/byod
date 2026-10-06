@@ -7,7 +7,15 @@ const HEADERS_ = {
   Teachers: ['name','defaultClass']
 };
 const ISSUES_ = ['使用時間過長','不恰當資料（相片／影片）','觀看視頻過多（如 YouTube）','其他問題'];
-function doGet() {
+function doGet(e) {
+  if(e && e.parameter && e.parameter.bridge==='1') {
+    const nonce=String(e.parameter.nonce||'');
+    if(!/^[0-9a-f]{32}$/.test(nonce))return HtmlService.createHtmlOutput('Invalid request');
+    const page=HtmlService.createTemplateFromFile('Bridge');
+    page.nonce=nonce;
+    return page.evaluate().setTitle('BYOD connection')
+      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  }
   return HtmlService.createHtmlOutputFromFile('Index')
     .setTitle('BYOD iPad 抽查系統').addMetaTag('viewport','width=device-width, initial-scale=1, viewport-fit=cover');
 }
